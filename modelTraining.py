@@ -88,8 +88,6 @@ def create_model(sequence_length, num_classes):
     model.add(Dense(128, activation='relu'))  # Dense layer with 128 neurons
     model.add(Dense(num_classes, activation='softmax'))  # Output layer
     model.summary()
-
-    # Compile model
     model.compile(optimizer=Adam(), loss='categorical_crossentropy', metrics=[CategoricalAccuracy()])
 
     return model
@@ -133,12 +131,14 @@ def main():
     # Load one file to get the sequence length
     sample_sequence = np.load(f"./data/encoded_sequences/{encoded_files[0]}")
     sequence_length = sample_sequence.shape[0]
+    print("Sequence Length:", sequence_length)
 
     # Create datasets
     train_dataset, test_dataset = create_datasets(files_train, y_train, files_test, y_test, sequence_length)
 
     # Create and train model
     model = create_model(sequence_length, len(label_encoder.classes_))
+    model.summary()
     model.fit(train_dataset, validation_data=test_dataset, epochs=10)
 
     # Predict on test data
