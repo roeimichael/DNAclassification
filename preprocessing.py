@@ -33,13 +33,33 @@ reduced_data = pd.read_csv("./data/dataset.csv")
 fasta_files = os.listdir("./data/fasta_files/")
 encoded_sequences = []
 # modified preprocessing code
+n_counts = []
+
 for fasta_file in tqdm(fasta_files, desc="Processing fasta files"):
     id = fasta_file.split("_")[1]
     sequence = read_fasta_file(f"./data/fasta_files/{fasta_file}")
-    encoded_sequence = np.array([one_hot_encoding[char] if char in one_hot_encoding else one_hot_encoding['N'] for char in sequence])
-    # Save each encoded sequence as a separate file
+    encoded_sequence = []
+    n_count = 0
+
+    for char in sequence:
+        if char == 'N':
+            n_count += 1
+        if char.isalpha() and char in one_hot_encoding:
+            encoded_sequence.append(one_hot_encoding[char])
+        else:
+            if char.isalpha():
+                encoded_sequence.append(one_hot_encoding['N'])
+
+
+    encoded_sequence = np.array(encoded_sequence)
     np.save(f"./data/encoded_sequences/{id}.npy", encoded_sequence)
     reduced_data.loc[reduced_data["id"] == id, "sequence"] = sequence
+
+    n_counts.append(n_count)
+
+n_counts.sort()
+print("Counts of 'N' in each fasta file:", n_counts)
+
 
 # Note: Don't save "encoded_sequence" in the DataFrame
 label_encoder = LabelEncoder()
