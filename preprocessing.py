@@ -30,44 +30,38 @@ one_hot_encoding = {'A': [1, 0, 0, 0],
                     'N': [0.25, 0.25, 0.25, 0.25]}
 
 reduced_data = pd.read_csv("./data/dataset.csv")
-fasta_files = os.listdir("./data/fasta_files/")
-encoded_sequences = []
-# modified preprocessing code
-n_counts = []
+fasta_files = os.listdir("./data/test/")
+ids_to_drop = []
 
 for fasta_file in tqdm(fasta_files, desc="Processing fasta files"):
     id = fasta_file.split("_")[1]
-    sequence = read_fasta_file(f"./data/fasta_files/{fasta_file}")
+    sequence = read_fasta_file(f"./data/test/{fasta_file}")
+    n_count = sequence.count('N')
+
+    if n_count > 500:
+        print(f"Skipping {id} due to excessive 'N's")
+        ids_to_drop.append(id)
+        continue
     encoded_sequence = []
-    n_count = 0
 
     for char in sequence:
-        if char == 'N':
-            n_count += 1
         if char.isalpha() and char in one_hot_encoding:
             encoded_sequence.append(one_hot_encoding[char])
         else:
             if char.isalpha():
                 encoded_sequence.append(one_hot_encoding['N'])
 
-
-    encoded_sequence = np.array(encoded_sequence)
     np.save(f"./data/encoded_sequences/{id}.npy", encoded_sequence)
     reduced_data.loc[reduced_data["id"] == id, "sequence"] = sequence
 
-    n_counts.append(n_count)
-
-n_counts.sort()
-print("Counts of 'N' in each fasta file:", n_counts)
-
+# Drop the rows for sequences that were skipped
+reduced_data = reduced_data[~reduced_data['id'].isin(ids_to_drop)]
 
 # Note: Don't save "encoded_sequence" in the DataFrame
 label_encoder = LabelEncoder()
 reduced_data["label"] = label_encoder.fit_transform(reduced_data["lineage"])
 
 # Save the DataFrame and label encoder
-reduced_data.to_pickle("./data/reduced_data_encoded.pkl")
+reduced_data.to_csv("./data/reduced_data_encoded.csv", index=False)
 with open("./data/label_encoder.pkl", "wb") as file:
     pickle.dump(label_encoder, file)
-
-

@@ -34,22 +34,17 @@ selected_lineages = [lineage for lineage in unique_lineages if len(lineage_sampl
 max_sequences_per_lineage = 500
 max_sequences = max_sequences_per_lineage * len(selected_lineages)
 
-# desired sequence length
-DESIRED_LENGTH = 29809
+# Desired sequence length
+DESIRED_LENGTH = 15000
 
-# define download function
+# Define download function
 def download_sample(sample, lineage):
     url = f"https://www.ebi.ac.uk/Tools/dbfetch/dbfetch?db=ena_sequence&id={sample}&format=fasta&style=raw&Retrieve=Retrieve"
     response = requests.get(url)
     if response.status_code == 200:
         filename = re.sub(r'[\\/:\*\?"<>\|()]', '_', sample)
         sequence = str(list(SeqIO.read(io.StringIO(response.text), "fasta").seq))
-        # Count number of 'N's in sequence
-        n_count = sequence.count('N')
-        if n_count > 100:
-            print(f"Skipping {filename} due to excessive 'N's")
-            return None
-        # adjust sequence length
+        # Adjust sequence length
         if len(sequence) > DESIRED_LENGTH:
             sequence = sequence[:DESIRED_LENGTH]  # chop off the end
         elif len(sequence) < DESIRED_LENGTH:
