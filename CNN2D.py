@@ -1,36 +1,30 @@
-from keras.layers import Conv2D, MaxPooling2D ,Flatten
-from keras.models import Model
-from keras.layers import Dense, Dropout
+# model.py
+import torch
+from torch import nn
 
-class CNN2D(Model):
-    def __init__(self, input_shape, n_classes, dropout_rate=0.3):
-        super(CNN2D, self).__init__()
-        self.conv1 = Conv2D(filters=32, kernel_size=(4, 4), activation='relu')
-        self.pool1 = MaxPooling2D(pool_size=(1, 2))
-        self.conv2 = Conv2D(filters=64, kernel_size=(4, 4), activation='relu')
-        self.pool2 = MaxPooling2D(pool_size=(1, 2))
-        self.flatten = Flatten()
-        self.fc1 = Dense(64, activation='relu')
-        self.dropout = Dropout(dropout_rate)
-        self.fc2 = Dense(n_classes, activation='softmax')
+class DNA_CNN(nn.Module):
+    def __init__(self):
+        super(DNA_CNN, self).__init__()
+        self.conv1 = nn.Conv2d(in_channels=1, out_channels=32, kernel_size=(4, 1))
+        self.conv2 = nn.Conv2d(in_channels=32, out_channels=64, kernel_size=(4, 1))
+        self.fc1 = nn.Linear(256, 128)
+        self.fc2 = nn.Linear(128, 10)
+        self.max_pool = nn.MaxPool2d((2, 1))
+        self.adaptive_pool = nn.AdaptiveMaxPool2d((1, 4))
+        self.dropout = nn.Dropout(p=0.5)
+        self.relu = nn.ReLU()
 
-    def call(self, x):
-        print(f"Initial input shape: {x.shape}")
+    def forward(self, x):
         x = self.conv1(x)
-        print(f"After Conv2D-1 output shape: {x.shape}")
-        x = self.pool1(x)
-        print(f"After MaxPooling2D-1 output shape: {x.shape}")
+        x = self.relu(x)
+        x = self.max_pool(x)
         x = self.conv2(x)
-        print(f"After Conv2D-2 output shape: {x.shape}")
-        x = self.pool2(x)
-        print(f"After MaxPooling2D-2 output shape: {x.shape}")
-        x = self.flatten(x)
-        print(f"After Flatten output shape: {x.shape}")
+        x = self.relu(x)
+        x = self.max_pool(x)
+        x = self.adaptive_pool(x)
+        x = x.view(x.size(0), -1)  # Flatten the tensor
         x = self.fc1(x)
-        print(f"After Dense-1 output shape: {x.shape}")
+        x = self.relu(x)
         x = self.dropout(x)
-        print(f"After Dropout output shape: {x.shape}")
         x = self.fc2(x)
-        print(f"Final output shape: {x.shape}")
-
         return x

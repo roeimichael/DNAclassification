@@ -1,120 +1,145 @@
-import pickle
-
-import tensorflow as tf
 import warnings
-from CNN2D import CNN2D
+from CNN2D import DNA_CNN
 import os
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
+from torch import nn
+from torch.utils.data import DataLoader, TensorDataset
+import torch
 from sklearn.metrics import classification_report
-from keras.utils import to_categorical
-from keras.optimizers import Adam
-from keras.losses import CategoricalCrossentropy
-from keras.metrics import CategoricalAccuracy, Precision, Recall
-from keras.utils import plot_model
+from tqdm import tqdm
 
 warnings.filterwarnings("ignore")
 
 
-def check_gpu_memory():
-    gpus = tf.config.experimental.list_physical_devices('GPU')
-    if gpus:
-        try:
-            for gpu in gpus:
-                tf.config.experimental.set_memory_growth(gpu, True)
-        except RuntimeError as e:
-            print(e)
-
-
-def create_model_2D(sequence_length, n_classes):
-    model = CNN2D(sequence_length, n_classes, dropout_rate=0.5)
-    model.compile(
-        loss=CategoricalCrossentropy(),
-        optimizer=Adam(),
-        metrics=[CategoricalAccuracy(), Precision(), Recall()]
-    )
-    return model
-
-
-def evaluate_model(y_true, y_pred):
-    # Convert prediction probabilities to class labels
-    y_pred = np.argmax(y_pred, axis=1)
-    y_true = np.argmax(y_true, axis=1)
-
-    # Compute metrics
-    accuracy = np.mean(y_true == y_pred)
-    report = classification_report(y_true, y_pred, output_dict=True)
-    precision = report['macro avg']['precision']
-    recall = report['macro avg']['recall']
-    f1 = report['macro avg']['f1-score']
-
-    return accuracy, precision, recall, f1
-
-
-def save_results(model, accuracy, precision, recall, f1):
-    model.save('model.h5')
-    print(f'Saved model to disk.')
-
-    print('\nClassification Report:\n')
-    print(f'Accuracy: {accuracy}')
-    print(f'Precision: {precision}')
-    print(f'Recall: {recall}')
-    print(f'F1 Score: {f1}')
-    plot_model(model, to_file='model.png', show_shapes=True)
-    print('Saved model architecture to disk.')
-
-
 def load_data():
-    sequences = []
-    labels = []
-    reduced_data = pd.read_csv("./data/reduced_data_encoded.csv")
-    reduced_data["id"] = reduced_data["id"].str.strip('"')
-    with open("./data/label_encoder.pkl", "rb") as file:
-        label_encoder = pickle.load(file)
-    npy_files = os.listdir("./data/encoded_sequences/")
-    for npy_file in npy_files:
-        id = npy_file.split(".")[0]
-        sequence = np.load(f"./data/encoded_sequences/{npy_file}")
-        lineage_values = reduced_data.loc[reduced_data["id"] == id, "lineage"].values
-        if len(lineage_values) > 0:
-            label = label_encoder.transform([lineage_values[0]])[0]
-        else:
-            print(f"No match found for id {id}")
-            label = -1
-        sequences.append(sequence)
-        labels.append(label)
+    data_path = "./data/processed_data.npz"
 
-    sequences = np.array(sequences)
-    sequences = sequences.reshape((-1, 3000, 4, 1))
+    if os.path.exists(data_path):
+        # Load the sequences and labels from the .npz file if it already exists
+        data = np.load(data_path, allow_pickle=True)
+        sequences = torch.Tensor(data['sequences'])
+        labels = torch.LongTensor(data['labels'])
+    else:
+        sequences = []
+        labels = []
+        reduced_data = pd.read_csv("./data/reduced_data_encoded.csv")
+        reduced_data["id"] = reduced_data["id"].str.strip('"')
+        npy_files = os.listdir("./data/encoded_sequences/")
+        for npy_file in npy_files:
+            id = npy_file.split(".")[0]
+            sequence = np.load(f"./data/encoded_sequences/{npy_file}")
+            label = reduced_data.loc[reduced_data["id"] == id, "label"].values
+            sequences.append(sequence)
+            labels.append(label)
 
-    labels = to_categorical(np.array(labels))  # Convert labels to one-hot encoded format
+        # Find the maximum and minimum sequence lengths
+        seq_lengths = [len(seq) for seq in sequences]
+        max_length = max(seq_lengths)
+        min_length = min(seq_lengths)
+        target_length = (max_length + min_length) // 2
+
+        # Pad or truncate sequences to match the target length
+        for i in range(len(sequences)):
+            difference = target_length - len(sequences[i])
+            if difference > 0:  # Sequence is shorter than target length
+                padding = np.repeat([[0.25, 0.25, 0.25, 0.25]], difference, axis=0)
+                sequences[i] = np.concatenate([sequences[i], padding])
+            elif difference < 0:  # Sequence is longer than target length
+                sequences[i] = sequences[i][:target_length]
+
+        # Save the processed sequences and labels to a .npz file
+        np.savez(data_path, sequences=sequences, labels=labels)
+
+        sequences = torch.Tensor(sequences)
+        labels = torch.LongTensor(labels)
+
     return sequences, labels
 
+def train(model, criterion, optimizer, train_loader, device):
+    model.train()  # set the model to training mode
+    total_loss = 0.0
+    for i, (sequences, labels) in enumerate(tqdm(train_loader)):
+        sequences = sequences.to(device)
+        labels = labels.to(device)
 
-sequences, labels = load_data()
-print(len(sequences), len(labels))
+        # Forward pass
+        outputs = model(sequences)
+        loss = criterion(outputs, labels)
 
-X_train, X_test, y_train, y_test = train_test_split(sequences, labels, test_size=0.2, random_state=42)
+        # Backward and optimize
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
 
-# Verify the length of the training and testing sets
-print(len(X_train), len(X_test), len(y_train), len(y_test))
-input_shape = (X_train.shape[1], 4, 1)  # Adjusted input shape
-n_classes = y_train.shape[1]
+        total_loss += loss.item()
 
-model = CNN2D(input_shape, n_classes, dropout_rate=0.5)
-model.compile(
-    loss=CategoricalCrossentropy(),
-    optimizer=Adam(),
-    metrics=[CategoricalAccuracy(), Precision(), Recall()]
-)
+    avg_loss = total_loss / len(train_loader)
+    return avg_loss
 
-# Fit the model to the training data
-model.fit(X_train, y_train, epochs=10, batch_size=32, verbose=1)
 
-# Evaluate the model on the testing data
-y_pred = model.predict(X_test)
-accuracy, precision, recall, f1 = evaluate_model(y_test, y_pred)
 
-# Save the model and the evaluation results
-save_results(model, accuracy, precision, recall, f1)
+def evaluate(model, test_loader,device):
+    model.eval()
+    total = 0
+    correct = 0
+    all_predictions = []
+    all_labels = []
+    with torch.no_grad():
+        for sequences, labels in tqdm(test_loader, desc="Evaluating"):
+            sequences, labels = sequences.to(device), labels.to(device)
+            outputs = model(sequences)
+            _, predicted = torch.max(outputs.data, 1)
+            all_predictions.extend(predicted.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+
+    print('Test Accuracy of the model on the test sequences: {} %'.format((correct / total) * 100))
+    return torch.tensor(all_predictions), torch.tensor(all_labels)
+
+
+def main():
+    data = np.load("./data/processed_data.npz", allow_pickle=True)
+    sequences = torch.Tensor(data['sequences'])
+    labels = torch.LongTensor(data['labels'])
+    print(sequences.shape)
+    print(labels.shape)
+
+    sequences = sequences.unsqueeze(1)
+    labels = labels.squeeze()
+
+    print(sequences.shape)
+    print(labels.shape)
+
+    # sequences, labels = load_data()
+    X_train, X_test, y_train, y_test = train_test_split(sequences, labels, test_size=0.2, random_state=42)
+
+    train_data = TensorDataset(X_train, y_train)
+    train_loader = DataLoader(train_data, batch_size=32)
+
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    if device.type == 'cuda':
+        print('Running on GPU: ', torch.cuda.get_device_name(0))  # Print the name of the GPU
+    else:
+        print("Running on CPU")
+
+    model = DNA_CNN()
+    model.to(device)
+
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+
+    avg = train(model, criterion, optimizer, train_loader, device)
+    print(avg)
+
+    test_data = TensorDataset(X_test, y_test)
+    test_loader = DataLoader(test_data, batch_size=32)
+    predicted, test_labels = evaluate(model, test_loader,device)
+
+    print(classification_report(test_labels.cpu().numpy(), predicted.cpu().numpy()))
+
+
+if __name__ == "__main__":
+    main()
