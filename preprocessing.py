@@ -1,10 +1,8 @@
 import os
-import pickle
-
+import random
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 from tqdm import tqdm
-import numpy as np
 
 def read_fasta_file(path):
     with open(path, "r") as file:
@@ -12,38 +10,37 @@ def read_fasta_file(path):
         sequence = ''.join(lines[1:]).replace('\n', '')
         return sequence
 
-one_hot_encoding = {'A': [1, 0, 0, 0],
-                    'C': [0, 1, 0, 0],
-                    'G': [0, 0, 1, 0],
-                    'T': [0, 0, 0, 1],
-                    'R': [0.5, 0, 0.5, 0],
-                    'Y': [0, 0.5, 0, 0.5],
-                    'S': [0, 0.5, 0.5, 0],
-                    'W': [0.5, 0, 0, 0.5],
-                    'K': [0, 0, 0.5, 0.5],
-                    'M': [0.5, 0.5, 0, 0],
-                    'B': [0, 1/3, 1/3, 1/3],
-                    'D': [1/3, 0, 1/3, 1/3],
-                    'H': [1/3, 1/3, 0, 1/3],
-                    'V': [1/3, 1/3, 1/3, 0],
-                    'N': [0.25, 0.25, 0.25, 0.25]}
+def encode_sequence(sequence):
+    encoded_sequence = ""
+    for char in sequence:
+        if char in ('A', 'C', 'G', 'T'):
+            if char == 'A':
+                encoded_sequence += "00"
+            elif char == 'C':
+                encoded_sequence += "01"
+            elif char == 'G':
+                encoded_sequence += "10"
+            elif char == 'T':
+                encoded_sequence += "11"
+        else:
+            random_encoding = random.choice(["00", "01", "10", "11"])
+            encoded_sequence += random_encoding
+    return encoded_sequence
 
 reduced_data = pd.read_csv("./data/dataset.csv")
 fasta_files = os.listdir("./data/fasta_files/")
 
+encoded_sequences = []  # List to store encoded sequences
+sequences = []
 for fasta_file in tqdm(fasta_files, desc="Processing fasta files"):
     id = fasta_file.split("_")[1]
     sequence = read_fasta_file(f"./data/fasta_files/{fasta_file}")
-    encoded_sequence = []
-    for char in sequence:
-        if char.isalpha() and char in one_hot_encoding:
-            encoded_sequence.append(one_hot_encoding[char])
-        else:
-            if char.isalpha():
-                encoded_sequence.append(one_hot_encoding['N'])
-    np.save(f"./data/encoded_sequences/{id}.npy", encoded_sequence)
-    reduced_data.loc[reduced_data["id"] == id, "sequence"] = sequence
+    encoded_sequence = encode_sequence(sequence)
+    sequences.append(sequence)
+    encoded_sequences.append(encoded_sequence)
 
+reduced_data["encoding"] = encoded_sequences
+reduced_data["sequence"] = sequences
 
 label_encoder = LabelEncoder()
 reduced_data["label"] = label_encoder.fit_transform(reduced_data["lineage"])
