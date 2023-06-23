@@ -11,7 +11,7 @@ class DNA_CNN(nn.Module):
         self.fc3 = nn.Linear(hidden_size, hidden_size)
         self.fc4 = nn.Linear(hidden_size, num_classes)
 
-    def forward(self, x, length):
+    def forward(self, x):
         out = self.fc1(x.float())
         out = self.relu(out)
         out = self.fc2(out)

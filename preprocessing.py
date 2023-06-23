@@ -23,8 +23,9 @@ def encode_sequence(sequence):
             elif char == 'T':
                 encoded_sequence += "11"
         else:
-            random_encoding = random.choice(["00", "01", "10", "11"])
-            encoded_sequence += random_encoding
+            if char.isalpha():
+                random_encoding = random.choice(["00", "01", "10", "11"])
+                encoded_sequence += random_encoding
     return encoded_sequence
 
 reduced_data = pd.read_csv("./data/dataset.csv")

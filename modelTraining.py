@@ -7,39 +7,50 @@ from torch.utils.data import DataLoader, TensorDataset
 from sklearn.metrics import classification_report
 from tqdm import tqdm
 import torch
+import os
+import numpy as np
+import pickle
 
 warnings.filterwarnings("ignore")
 
 
 def load_data():
-    reduced_data = pd.read_csv("./data/reduced_data_encoded.csv")
-    sequences = reduced_data["encoding"].tolist()
-    labels = reduced_data["label"].values
-    ids = reduced_data["id"].values
+    if os.path.exists("./data/processed_data.pkl"):
+        with open("./data/processed_data.pkl", "rb") as f:
+            sequences, labels, ids = pickle.load(f)
+        seq_lengths = [len(seq) for seq in sequences]
+        max_length = max(seq_lengths)
+        min_length = min(seq_lengths)
+        target_length = (max_length + min_length) // 2
+    else:
+        reduced_data = pd.read_csv("./data/reduced_data_encoded.csv")
+        sequences = reduced_data["encoding"].tolist()
+        labels = reduced_data["label"].values
+        ids = reduced_data["id"].values
 
-    sequences = [[int(digit) for digit in sequence] for sequence in sequences]  # Convert string sequences to lists of integers
+        sequences = [[int(digit) for digit in sequence] for sequence in sequences]
+        seq_lengths = [len(seq) for seq in sequences]
+        max_length = max(seq_lengths)
+        min_length = min(seq_lengths)
+        target_length = (max_length + min_length) // 2
 
-    sequences = torch.LongTensor(sequences)
-    labels = torch.LongTensor(labels)
+        for i in tqdm(range(len(sequences)), desc="Processing sequences"):
+            difference = target_length - len(sequences[i])
+            if difference > 0:  # Sequence is shorter than target length
+                padding = [0 for _ in range(difference)]
+                sequences[i] += padding
+            elif difference < 0:  # Sequence is longer than target length
+                sequences[i] = sequences[i][:target_length]
 
-    # Adjust sequence lengths
-    seq_lengths = [len(seq) for seq in sequences]
-    max_length = max(seq_lengths)
-    min_length = min(seq_lengths)
-    target_length = (max_length + min_length) // 2
-    for i in tqdm(range(len(sequences)), desc="Processing sequences"):
-        difference = target_length - len(sequences[i])
-        if difference > 0:  # Sequence is shorter than target length
-            padding = [[0, 0] for _ in range(difference)]
-            sequences[i] = torch.cat((sequences[i], torch.LongTensor(padding)), dim=0)
-        elif difference < 0:  # Sequence is longer than target length
-            sequences[i] = sequences[i][:target_length]
+        sequences = [torch.LongTensor(np.array(seq)) for seq in sequences]  # Convert each sequence to a tensor
+        sequences = torch.nn.utils.rnn.pad_sequence(sequences, batch_first=True)
+        labels = torch.LongTensor(labels)
 
-    return sequences, labels, idss
+        with open("./data/processed_data.pkl", "wb") as f:
+            pickle.dump((sequences, labels, ids), f)
 
 
-
-
+    return sequences, labels, ids, target_length
 
 
 def train(model, criterion, optimizer, train_loader, device, num_epochs, num_classes):
@@ -85,42 +96,29 @@ def evaluate(model, test_loader, device):
         for sequences, labels in tqdm(test_loader, desc="Evaluating"):
             sequences, labels = sequences.to(device), labels.to(device)
             outputs = model(sequences)
+            print(f"Shape of outputs: {outputs.shape}")
             _, predicted = torch.max(outputs.data, 1)
+            print(f"Shape of predicted before squeezing: {predicted.shape}")
+            predicted = predicted.squeeze()  # reduce the dimension
+            print(f"Shape of predicted after squeezing: {predicted.shape}")
             all_predictions.extend(predicted.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
             total += labels.size(0)
+
             correct += (predicted == labels).sum().item()
 
     print('Test Accuracy of the model on the test sequences: {} %'.format((correct / total) * 100))
     return torch.tensor(all_predictions), torch.tensor(all_labels)
 
 
-def compare_labels_ids(labels_csv, ids_csv):
-    reduced_data = pd.read_csv("./data/reduced_data_encoded.csv")
-    reduced_data["id"] = reduced_data["id"].str.strip('"')
-
-    csv_dict = dict(zip(ids_csv, labels_csv))
-
-    for id in ids_csv:
-        label_csv = csv_dict[id]
-        label_reduced = reduced_data.loc[reduced_data["id"] == id, "label"].values[0]
-        if label_csv != label_reduced:
-            print(f"Mismatch for ID: {id}")
-            print(f"Label from CSV file: {label_csv}")
-            print(f"Label from reduced_data_encoded.csv file: {label_reduced}")
-            print()
-
-
 def main():
-    sequences, labels, ids = load_data()
+    sequences, labels, ids, input_size = load_data()
 
     print(sequences.shape)
     print(labels.shape)
 
     sequences = sequences.unsqueeze(1)
     labels = labels.squeeze()
-
-    compare_labels_ids(labels, ids)
 
     print(sequences.shape)
     print(labels.shape)
@@ -131,22 +129,25 @@ def main():
     train_loader = DataLoader(train_data, batch_size=32)
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-
     num_classes = len(labels.unique())
-    model = DNA_CNN()
+    hidden_size = 128
+    model = DNA_CNN(input_size, hidden_size, num_classes)
     model.to(device)
 
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
 
-    avg = train(model, criterion, optimizer, train_loader, device, num_epochs=10, num_classes=num_classes)
-    print(avg)
+    if os.path.exists("./model/model.pth"):
+        model.load_state_dict(torch.load("./model/model.pth"))
+    else:
+        avg = train(model, criterion, optimizer, train_loader, device, num_epochs=10, num_classes=num_classes)
+        torch.save(model.state_dict(), "./model/model.pth")
+        print(avg)
 
     test_data = TensorDataset(X_test, y_test)
     test_loader = DataLoader(test_data, batch_size=32)
     predicted, test_labels = evaluate(model, test_loader, device)
 
-    print(classification_report(test_labels.cpu().numpy(), predicted.cpu().numpy()))
 
 
 if __name__ == "__main__":
