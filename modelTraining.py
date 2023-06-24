@@ -55,6 +55,8 @@ def load_data():
 
 
 def train(model, criterion, optimizer, train_loader, device, num_epochs, num_classes):
+    training_loss = []  # To record training loss after every epoch
+
     for epoch in range(num_epochs):
         model.train()
         running_loss = 0.0
@@ -87,26 +89,36 @@ def train(model, criterion, optimizer, train_loader, device, num_epochs, num_cla
                     f"Epoch [{epoch + 1}/{num_epochs}] - Batch [{batch_idx + 1}/{len(train_loader)}] - Loss: {batch_loss:.4f} - Accuracy: {accuracy:.2f}%")
                 running_loss = 0.0
                 correct_predictions = 0
+            training_loss.append(running_loss / len(train_loader))
+    return training_loss
 
 
 def evaluate(model, test_loader, device):
     model.eval()
     total = 0
     correct = 0
+    top5_correct = 0
     all_predictions = []
     all_labels = []
     with torch.no_grad():
         for sequences, labels in tqdm(test_loader, desc="Evaluating"):
-            sequences, labels = sequences.float().to(device), labels.to(device)  # Cast sequences to float here
+            sequences, labels = sequences.float().to(device), labels.to(device)
             sequences = sequences.unsqueeze(1)  # Add an extra channel dimension
             outputs = model(sequences).squeeze(1)  # squeeze the 2nd dimension
             _, predicted = torch.max(outputs, 1)
+            _, top5_pred = torch.topk(outputs, 5)
             all_predictions.extend(predicted.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
+            top5_correct += sum([1 if labels[i] in top5_pred[i] else 0 for i in range(len(labels))])
 
-    return torch.tensor(all_predictions), torch.tensor(all_labels)
+    top1_accuracy = correct / total
+    top5_accuracy = top5_correct / total
+    print(f"Top 1 Accuracy: {top1_accuracy*100:.2f}%")
+    print(f"Top 5 Accuracy: {top5_accuracy*100:.2f}%")
+
+    return torch.tensor(all_predictions), torch.tensor(all_labels), top1_accuracy, top5_accuracy
 
 
 def visualize_results(test_labels, predicted_onehot, predicted, num_classes):
@@ -174,11 +186,11 @@ def visualize_results(test_labels, predicted_onehot, predicted, num_classes):
 
 
 def main():
-    convdf,  input_size = load_data()
-    # data = pd.read_csv("./data/dataset.csv")
-    # sequence_lengths = data["sequence_length"].values
-    # input_size = sequence_lengths.mean().astype(int)
-    # convdf = pd.read_csv("./data/converted_data.csv")
+    # convdf,  input_size = load_data()
+    data = pd.read_csv("./data/dataset.csv")
+    sequence_lengths = data["sequence_length"].values
+    input_size = sequence_lengths.mean().astype(int)
+    convdf = pd.read_csv("./data/converted_data.csv")
 
     convdf['lineage'] = convdf['lineage'].astype('category')
 
@@ -214,7 +226,7 @@ def main():
     if os.path.exists(f"./model/{model_name}.pth"):
         model.load_state_dict(torch.load(f"./model/{model_name}.pth"))
     else:
-        train(model, criterion, optimizer, train_loader, device, num_epochs=5, num_classes=num_classes)
+        training_loss = train(model, criterion, optimizer, train_loader, device, num_epochs=30, num_classes=num_classes)
         torch.save(model.state_dict(), f"./model/{model_name}.pth")
 
     X_test_list = X_test.apply(lambda x: [int(num) for num in x]).tolist()
@@ -223,10 +235,18 @@ def main():
 
     test_data = TensorDataset(X_test_tensor, y_test_tensor)
     test_loader = DataLoader(test_data, batch_size=32)
-    predicted, test_labels = evaluate(model, test_loader, device)
+    predicted, test_labels, top1_accuracy, top5_accuracy = evaluate(model, test_loader, device)
+    predicted = predicted.long()
     predicted_onehot = torch.nn.functional.one_hot(predicted, num_classes=num_classes)
     visualize_results(test_labels, predicted_onehot, predicted, num_classes)
 
+    # Plot Learning Curve
+    plt.figure()
+    plt.plot(training_loss)
+    plt.title('Learning Curve')
+    plt.xlabel('Epochs')
+    plt.ylabel('Loss')
+    plt.show()
 
 if __name__ == "__main__":
     main()

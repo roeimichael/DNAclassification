@@ -23,9 +23,13 @@ class ComplexCNN(nn.Module):
             nn.ReLU(),
             nn.MaxPool1d(kernel_size=2, stride=2)
         )
-
+        self.layer4 = nn.Sequential(
+            nn.Conv1d(hidden_size * 4, hidden_size * 8, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool1d(kernel_size=2, stride=2)
+        )
         # Calculate the size of the input to the first fully connected layer
-        fc_input_size = hidden_size * 4 * (input_size // (2 ** 3))  # 2^3 because of 3 maxpooling layers
+        fc_input_size = hidden_size * 8 * (input_size // (2 ** 4))  # 2^3 because of 3 maxpooling layers
 
         self.fc1 = nn.Linear(fc_input_size, hidden_size * 4)
         self.fc2 = nn.Linear(hidden_size * 4, num_classes)
