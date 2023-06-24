@@ -62,6 +62,7 @@ def train(model, criterion, optimizer, train_loader, device, num_epochs, num_cla
 
         for batch_idx, (inputs, targets) in enumerate(train_loader):
             inputs = inputs.float().to(device)
+            inputs = inputs.unsqueeze(1)  # Add an extra channel dimension
 
             targets = targets.to(device)
 
@@ -97,6 +98,7 @@ def evaluate(model, test_loader, device):
     with torch.no_grad():
         for sequences, labels in tqdm(test_loader, desc="Evaluating"):
             sequences, labels = sequences.float().to(device), labels.to(device)  # Cast sequences to float here
+            sequences = sequences.unsqueeze(1)  # Add an extra channel dimension
             outputs = model(sequences).squeeze(1)  # squeeze the 2nd dimension
             _, predicted = torch.max(outputs, 1)
             all_predictions.extend(predicted.cpu().numpy())
@@ -172,33 +174,40 @@ def visualize_results(test_labels, predicted_onehot, predicted, num_classes):
 
 
 def main():
-    # convdf,  input_size = load_data()
-    data = pd.read_csv("./data/dataset.csv")
-    sequence_lengths = data["sequence_length"].values
-    input_size = sequence_lengths.mean().astype(int)
-    convdf = pd.read_csv("./data/converted_data.csv")
+    convdf,  input_size = load_data()
+    # data = pd.read_csv("./data/dataset.csv")
+    # sequence_lengths = data["sequence_length"].values
+    # input_size = sequence_lengths.mean().astype(int)
+    # convdf = pd.read_csv("./data/converted_data.csv")
 
     convdf['lineage'] = convdf['lineage'].astype('category')
 
     sequences = convdf['Enc_Sequence']
     labels = convdf['lineage']
+    # for seq in sequences:
+    #     enc_sequence = np.array(list(seq), dtype=np.uint8)
+    #     enc_sequence = enc_sequence.reshape(-1)  # Remove extra dimensions
+    #     seq = torch.tensor(enc_sequence)
+
 
     X_train, X_test, y_train, y_test = train_test_split(sequences, labels, test_size=0.2, random_state=42)
+
+
     X_train_list = X_train.apply(lambda x: [int(num) for num in x]).tolist()
     X_train_tensor = torch.tensor(X_train_list)
-
     y_train_tensor = torch.tensor(y_train.cat.codes.tolist())
+
     train_data = TensorDataset(X_train_tensor, y_train_tensor)
     train_loader = DataLoader(train_data, batch_size=32)
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     num_classes = len(labels.unique())
-    hidden_size = 256
-    model = SimpleCNN(input_size, hidden_size, num_classes)
+    hidden_size = 32
+    model = ComplexCNN(input_size, hidden_size, num_classes)
     model.to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
 
     model_name = type(model).__name__
 
@@ -207,9 +216,12 @@ def main():
     else:
         train(model, criterion, optimizer, train_loader, device, num_epochs=5, num_classes=num_classes)
         torch.save(model.state_dict(), f"./model/{model_name}.pth")
-    X_test = torch.tensor(X_test.tolist())
-    y_test = torch.tensor(y_test.tolist())
-    test_data = TensorDataset(X_test, y_test)
+
+    X_test_list = X_test.apply(lambda x: [int(num) for num in x]).tolist()
+    X_test_tensor = torch.tensor(X_test_list)
+    y_test_tensor = torch.tensor(y_test.cat.codes.tolist())
+
+    test_data = TensorDataset(X_test_tensor, y_test_tensor)
     test_loader = DataLoader(test_data, batch_size=32)
     predicted, test_labels = evaluate(model, test_loader, device)
     predicted_onehot = torch.nn.functional.one_hot(predicted, num_classes=num_classes)
