@@ -1,56 +1,57 @@
-import warnings
-from CNN2D import DNA_CNN
+from ComplexCNN import ComplexCNN
+from SimpleCNN import SimpleCNN
+from DecentCNN import DecentCNN
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
-from sklearn.metrics import classification_report
 from tqdm import tqdm
 import torch
-import os
 import numpy as np
 import pickle
+import os
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.metrics import confusion_matrix, classification_report
+from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
+from sklearn.preprocessing import label_binarize
+from itertools import cycle
+import warnings
+from sklearn.preprocessing import LabelEncoder
 
 warnings.filterwarnings("ignore")
 
 
 def load_data():
-    if os.path.exists("./data/processed_data.pkl"):
-        with open("./data/processed_data.pkl", "rb") as f:
-            sequences, labels, ids = pickle.load(f)
-        seq_lengths = [len(seq) for seq in sequences]
-        max_length = max(seq_lengths)
-        min_length = min(seq_lengths)
-        target_length = (max_length + min_length) // 2
-    else:
-        reduced_data = pd.read_csv("./data/reduced_data_encoded.csv")
-        sequences = reduced_data["encoding"].tolist()
-        labels = reduced_data["label"].values
-        ids = reduced_data["id"].values
+    data = pd.read_csv("./data/dataset.csv")
+    data.set_index('id', inplace=True)  # index the dataframe by IDs for direct lookup
+    text_files_folder = "./data/encoded_sequences"
 
-        sequences = [[int(digit) for digit in sequence] for sequence in sequences]
-        seq_lengths = [len(seq) for seq in sequences]
-        max_length = max(seq_lengths)
-        min_length = min(seq_lengths)
-        target_length = (max_length + min_length) // 2
+    label_encoder = LabelEncoder()
+    data['lineage'] = label_encoder.fit_transform(data['lineage'].values)  # directly encode lineages in dataframe
 
-        for i in tqdm(range(len(sequences)), desc="Processing sequences"):
-            difference = target_length - len(sequences[i])
+    sequence_lengths = data["sequence_length"].values
+    target_length = sequence_lengths.mean().astype(int)
+
+    converted_data, sequences, labels = [], [], []
+    for file_path in tqdm(os.listdir(text_files_folder), desc="Processing text files"):
+        with open(os.path.join(text_files_folder, file_path), "r") as file:
+            content = file.read().strip()
+            difference = target_length - len(content)
             if difference > 0:  # Sequence is shorter than target length
-                padding = [0 for _ in range(difference)]
-                sequences[i] += padding
+                padding = "0" * difference
+                content += padding
             elif difference < 0:  # Sequence is longer than target length
-                sequences[i] = sequences[i][:target_length]
+                content = content[:target_length]
 
-        sequences = [torch.LongTensor(np.array(seq)) for seq in sequences]  # Convert each sequence to a tensor
-        sequences = torch.nn.utils.rnn.pad_sequence(sequences, batch_first=True)
-        labels = torch.LongTensor(labels)
+            file_name = '"' + os.path.splitext(file_path)[0] + '"'
+            converted_data.append([file_name, "".join(map(str, content))])
 
-        with open("./data/processed_data.pkl", "wb") as f:
-            pickle.dump((sequences, labels, ids), f)
+    converted_df = pd.DataFrame(converted_data, columns=["ID", "Enc_Sequence"])  # Create the dataframe
+    converted_df["lineage"] = converted_df["ID"].map(data["lineage"])
+    converted_df.to_csv("./data/converted_data.csv", index=False)
 
-
-    return sequences, labels, ids, target_length
+    return converted_df, target_length
 
 
 def train(model, criterion, optimizer, train_loader, device, num_epochs, num_classes):
@@ -60,7 +61,8 @@ def train(model, criterion, optimizer, train_loader, device, num_epochs, num_cla
         correct_predictions = 0
 
         for batch_idx, (inputs, targets) in enumerate(train_loader):
-            inputs = inputs.to(device)
+            inputs = inputs.float().to(device)
+
             targets = targets.to(device)
 
             optimizer.zero_grad()
@@ -94,60 +96,124 @@ def evaluate(model, test_loader, device):
     all_labels = []
     with torch.no_grad():
         for sequences, labels in tqdm(test_loader, desc="Evaluating"):
-            sequences, labels = sequences.to(device), labels.to(device)
-            outputs = model(sequences)
-            print(f"Shape of outputs: {outputs.shape}")
-            _, predicted = torch.max(outputs.data, 1)
-            print(f"Shape of predicted before squeezing: {predicted.shape}")
-            predicted = predicted.squeeze()  # reduce the dimension
-            print(f"Shape of predicted after squeezing: {predicted.shape}")
+            sequences, labels = sequences.float().to(device), labels.to(device)  # Cast sequences to float here
+            outputs = model(sequences).squeeze(1)  # squeeze the 2nd dimension
+            _, predicted = torch.max(outputs, 1)
             all_predictions.extend(predicted.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
             total += labels.size(0)
-
             correct += (predicted == labels).sum().item()
 
-    print('Test Accuracy of the model on the test sequences: {} %'.format((correct / total) * 100))
     return torch.tensor(all_predictions), torch.tensor(all_labels)
 
 
+def visualize_results(test_labels, predicted_onehot, predicted, num_classes):
+    test_labels_bin = label_binarize(test_labels.cpu().numpy(), classes=[i for i in range(num_classes)])
+    predicted_onehot = predicted_onehot.cpu().numpy()
+
+    fpr = dict()
+    tpr = dict()
+    roc_auc = dict()
+
+    for i in range(num_classes):
+        fpr[i], tpr[i], _ = roc_curve(test_labels_bin[:, i], predicted_onehot[:, i])
+        roc_auc[i] = auc(fpr[i], tpr[i])
+
+    colors = cycle(['aqua', 'darkorange', 'cornflowerblue'])
+
+    for i, color in zip(range(num_classes), colors):
+        plt.plot(fpr[i], tpr[i], color=color, lw=2,
+                 label='ROC curve of class {0} (area = {1:0.2f})'
+                       ''.format(i, roc_auc[i]))
+
+    plt.plot([0, 1], [0, 1], 'k--', lw=2)
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Receiver Operating Characteristic for multi-class data')
+    plt.legend(loc="lower right")
+    plt.show()
+
+    # Precision-Recall curve
+    precision = dict()
+    recall = dict()
+    average_precision = dict()
+
+    for i in range(num_classes):
+        precision[i], recall[i], _ = precision_recall_curve(test_labels_bin[:, i], predicted_onehot[:, i])
+        average_precision[i] = average_precision_score(test_labels_bin[:, i], predicted_onehot[:, i])
+
+    colors = cycle(['navy', 'turquoise', 'darkorange', 'cornflowerblue', 'teal'])
+
+    for i, color in zip(range(num_classes), colors):
+        plt.plot(recall[i], precision[i], color=color, lw=2,
+                 label='Precision-recall curve of class {0} (area = {1:0.2f})'
+                       ''.format(i, average_precision[i]))
+
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('Recall')
+    plt.ylabel('Precision')
+    plt.title('Extension of Precision-Recall curve to multi-class')
+    plt.legend(loc="lower right")
+    plt.show()
+
+    # Confusion Matrix
+    cm = confusion_matrix(test_labels.cpu().numpy(), predicted.cpu().numpy())
+    plt.figure(figsize=(10, 10))
+    sns.heatmap(cm, annot=True, fmt=".3f", linewidths=.5, square=True, cmap='Blues_r');
+    plt.ylabel('Actual label');
+    plt.xlabel('Predicted label');
+    plt.show()
+
+    # Classification Report
+    print(classification_report(test_labels.cpu().numpy(), predicted.cpu().numpy()))
+
+
 def main():
-    sequences, labels, ids, input_size = load_data()
+    # convdf,  input_size = load_data()
+    data = pd.read_csv("./data/dataset.csv")
+    sequence_lengths = data["sequence_length"].values
+    input_size = sequence_lengths.mean().astype(int)
+    convdf = pd.read_csv("./data/converted_data.csv")
 
-    print(sequences.shape)
-    print(labels.shape)
+    convdf['lineage'] = convdf['lineage'].astype('category')
 
-    sequences = sequences.unsqueeze(1)
-    labels = labels.squeeze()
-
-    print(sequences.shape)
-    print(labels.shape)
+    sequences = convdf['Enc_Sequence']
+    labels = convdf['lineage']
 
     X_train, X_test, y_train, y_test = train_test_split(sequences, labels, test_size=0.2, random_state=42)
+    X_train_list = X_train.apply(lambda x: [int(num) for num in x]).tolist()
+    X_train_tensor = torch.tensor(X_train_list)
 
-    train_data = TensorDataset(X_train, y_train)
+    y_train_tensor = torch.tensor(y_train.cat.codes.tolist())
+    train_data = TensorDataset(X_train_tensor, y_train_tensor)
     train_loader = DataLoader(train_data, batch_size=32)
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     num_classes = len(labels.unique())
-    hidden_size = 128
-    model = DNA_CNN(input_size, hidden_size, num_classes)
+    hidden_size = 256
+    model = SimpleCNN(input_size, hidden_size, num_classes)
     model.to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 
-    if os.path.exists("./model/model.pth"):
-        model.load_state_dict(torch.load("./model/model.pth"))
+    model_name = type(model).__name__
+
+    if os.path.exists(f"./model/{model_name}.pth"):
+        model.load_state_dict(torch.load(f"./model/{model_name}.pth"))
     else:
-        avg = train(model, criterion, optimizer, train_loader, device, num_epochs=10, num_classes=num_classes)
-        torch.save(model.state_dict(), "./model/model.pth")
-        print(avg)
-
+        train(model, criterion, optimizer, train_loader, device, num_epochs=5, num_classes=num_classes)
+        torch.save(model.state_dict(), f"./model/{model_name}.pth")
+    X_test = torch.tensor(X_test.tolist())
+    y_test = torch.tensor(y_test.tolist())
     test_data = TensorDataset(X_test, y_test)
     test_loader = DataLoader(test_data, batch_size=32)
     predicted, test_labels = evaluate(model, test_loader, device)
-
+    predicted_onehot = torch.nn.functional.one_hot(predicted, num_classes=num_classes)
+    visualize_results(test_labels, predicted_onehot, predicted, num_classes)
 
 
 if __name__ == "__main__":

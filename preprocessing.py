@@ -4,14 +4,21 @@ import pandas as pd
 from sklearn.preprocessing import LabelEncoder
 from tqdm import tqdm
 
+
 def read_fasta_file(path):
     with open(path, "r") as file:
         lines = file.readlines()
         sequence = ''.join(lines[1:]).replace('\n', '')
+        sequence = ''.join(c for c in sequence if c.isalpha())  # This will remove non-alpha characters
         return sequence
+
 
 def encode_sequence(sequence):
     encoded_sequence = ""
+    # Create a dictionary for additional characters
+    char_dict = {'R': ['A', 'G'], 'Y': ['C', 'T'], 'S': ['G', 'C'], 'W': ['A', 'T'],
+                 'K': ['G', 'T'], 'M': ['A', 'C'], 'B': ['C', 'G', 'T'],
+                 'D': ['A', 'G', 'T'], 'H': ['A', 'C', 'T'], 'V': ['A', 'C', 'G'], 'N': ['A']}
     for char in sequence:
         if char in ('A', 'C', 'G', 'T'):
             if char == 'A':
@@ -22,28 +29,40 @@ def encode_sequence(sequence):
                 encoded_sequence += "10"
             elif char == 'T':
                 encoded_sequence += "11"
-        else:
-            if char.isalpha():
-                random_encoding = random.choice(["00", "01", "10", "11"])
-                encoded_sequence += random_encoding
+        elif char in char_dict.keys():
+            selected_char = random.choice(char_dict[char])
+            if selected_char == 'A':
+                encoded_sequence += "00"
+            elif selected_char == 'C':
+                encoded_sequence += "01"
+            elif selected_char == 'G':
+                encoded_sequence += "10"
+            elif selected_char == 'T':
+                encoded_sequence += "11"
     return encoded_sequence
+
+
+def process_sequence(sequence):
+    return encode_sequence(sequence)
+
 
 reduced_data = pd.read_csv("./data/dataset.csv")
 fasta_files = os.listdir("./data/fasta_files/")
 
-encoded_sequences = []  # List to store encoded sequences
-sequences = []
+sequence_lengths = []  # List to store sequence lengths
+
 for fasta_file in tqdm(fasta_files, desc="Processing fasta files"):
     id = fasta_file.split("_")[1]
     sequence = read_fasta_file(f"./data/fasta_files/{fasta_file}")
-    encoded_sequence = encode_sequence(sequence)
-    sequences.append(sequence)
-    encoded_sequences.append(encoded_sequence)
+    encoded_sequence = process_sequence(sequence)
 
-reduced_data["encoding"] = encoded_sequences
-reduced_data["sequence"] = sequences
+    with open(f'./data/encoded_sequences/{id}.txt', 'w') as file:
+        file.write(encoded_sequence)
 
-label_encoder = LabelEncoder()
-reduced_data["label"] = label_encoder.fit_transform(reduced_data["lineage"])
+    sequence_lengths.append(len(encoded_sequence))  # Add the length of the sequence to the list
 
-reduced_data.to_csv("./data/reduced_data_encoded.csv", index=False)
+# Assuming that reduced_data dataframe has the same number of rows and in the same order as fasta_files
+reduced_data['sequence_length'] = sequence_lengths  # Add the list as a new column to the dataframe
+
+reduced_data.to_csv("./data/dataset.csv", index=False)
+
