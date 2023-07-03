@@ -54,7 +54,7 @@ def load_data():
     return converted_df, target_length
 
 
-def train(model, criterion, optimizer, train_loader, device, num_epochs, num_classes):
+def train(model, criterion, optimizer,scheduler, train_loader, device, num_epochs, num_classes):
     training_loss = []  # To record training loss after every epoch
 
     for epoch in range(num_epochs):
@@ -77,6 +77,7 @@ def train(model, criterion, optimizer, train_loader, device, num_epochs, num_cla
             loss = criterion(outputs, targets)
             loss.backward()
             optimizer.step()
+            scheduler.step()
 
             running_loss += loss.item()
             _, predicted = torch.max(outputs.data, 1)
@@ -210,7 +211,7 @@ def main():
     y_train_tensor = torch.tensor(y_train.cat.codes.tolist())
 
     train_data = TensorDataset(X_train_tensor, y_train_tensor)
-    train_loader = DataLoader(train_data, batch_size=32)
+    train_loader = DataLoader(train_data, batch_size=16)
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     num_classes = len(labels.unique())
@@ -219,14 +220,15 @@ def main():
     model.to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)  # Using weight decay
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)  # Using learning rate scheduler
 
     model_name = type(model).__name__
 
     if os.path.exists(f"./model/{model_name}.pth"):
         model.load_state_dict(torch.load(f"./model/{model_name}.pth"))
     else:
-        training_loss = train(model, criterion, optimizer, train_loader, device, num_epochs=30, num_classes=num_classes)
+        training_loss = train(model, criterion, optimizer,scheduler, train_loader, device, num_epochs=30, num_classes=num_classes)
         torch.save(model.state_dict(), f"./model/{model_name}.pth")
 
     X_test_list = X_test.apply(lambda x: [int(num) for num in x]).tolist()
@@ -234,7 +236,7 @@ def main():
     y_test_tensor = torch.tensor(y_test.cat.codes.tolist())
 
     test_data = TensorDataset(X_test_tensor, y_test_tensor)
-    test_loader = DataLoader(test_data, batch_size=32)
+    test_loader = DataLoader(test_data, batch_size=16)
     predicted, test_labels, top1_accuracy, top5_accuracy = evaluate(model, test_loader, device)
     predicted = predicted.long()
     predicted_onehot = torch.nn.functional.one_hot(predicted, num_classes=num_classes)
