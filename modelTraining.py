@@ -1,14 +1,10 @@
-from ComplexCNN import ComplexCNN
-from SimpleCNN import SimpleCNN
-from DecentCNN import DecentCNN
+from models.ComplexCNN import ComplexCNN
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 import torch
-import numpy as np
-import pickle
 import os
 import matplotlib.pyplot as plt
 import seaborn as sns
