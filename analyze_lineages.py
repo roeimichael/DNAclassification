@@ -54,7 +54,7 @@ for lineage in tqdm(all_directories, desc="Analyzing lineages"):
             kmer_freqs = get_kmer_counts(sequence, 4)
             all_kmer_freqs += Counter(kmer_freqs)
         except Exception as e:
-            print(f"An error occurred while processing file {fasta_file_path}. Error: {str(e)}")
+            print(f"An error occurred while proc5 essing file {fasta_file_path}. Error: {str(e)}")
 
     # calculate average 4-mer frequencies
     total_sequences = len(seq_lengths)
