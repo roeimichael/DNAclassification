@@ -213,6 +213,7 @@ def main():
     train_loader = DataLoader(train_data, batch_size=16)
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(device)
     num_classes = len(labels.unique())
     hidden_size = 32
     model = ComplexCNN(input_size, hidden_size, num_classes)
