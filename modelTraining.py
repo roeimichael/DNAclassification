@@ -1,21 +1,23 @@
-from models.ComplexCNN import ComplexCNN
+import logging
 import pandas as pd
-from sklearn.model_selection import train_test_split
+import os
+import numpy as np
+import torch
 from torch import nn
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
-import torch
-import os
+from models.ComplexCNN import ComplexCNN
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import confusion_matrix, classification_report, roc_curve, auc, precision_recall_curve, \
+    average_precision_score, precision_score
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import confusion_matrix, classification_report
-from sklearn.metrics import roc_curve, auc, precision_recall_curve, average_precision_score
-from sklearn.preprocessing import label_binarize
 from itertools import cycle
 import warnings
-from sklearn.preprocessing import LabelEncoder
 
 warnings.filterwarnings("ignore")
+logging.basicConfig(level=logging.INFO)
 
 
 class GenomicClassifier:
@@ -29,46 +31,69 @@ class GenomicClassifier:
         self.num_classes = num_classes
         self.training_loss = []
 
+    class GenomicClassifier:
+        def __init__(self, model, criterion, optimizer, scheduler, device, num_epochs, num_classes):
+            self.model = model
+            self.criterion = criterion
+            self.optimizer = optimizer
+            self.scheduler = scheduler
+            self.device = device
+            self.num_epochs = num_epochs
+            self.num_classes = num_classes
+            self.training_loss = []
+
     def load_data(self):
-        data = pd.read_csv("./data/dataset.csv")
-        data.set_index('id', inplace=True)  # index the dataframe by IDs for direct lookup
-        text_files_folder = "./data/encoded_sequences"
+        try:
+            text_files_folder = "./data/encoded_sequences"
+            assert os.path.exists(text_files_folder), "Data folder does not exist."
 
-        label_encoder = LabelEncoder()
-        data['lineage'] = label_encoder.fit_transform(data['lineage'].values)  # directly encode lineages in dataframe
+            lineages = [d for d in os.listdir(text_files_folder) if
+                        os.path.isdir(os.path.join(text_files_folder, d))]
+            label_encoder = LabelEncoder()
+            encoded_lineages = label_encoder.fit_transform(lineages)
+            class_to_lineage = {class_id: lineage for lineage, class_id in zip(lineages, encoded_lineages)}
+            converted_data = []
+            sequence_lengths = []
 
-        sequence_lengths = data["sequence_length"].values
-        target_length = sequence_lengths.mean().astype(int)
+            # Wrap the outer loop with tqdm
+            for lineage, class_id in tqdm(zip(lineages, encoded_lineages), desc="Processing lineages"):
+                lineage_folder = os.path.join(text_files_folder, lineage)
+                files = os.listdir(lineage_folder)[:100]
 
-        converted_data, sequences, labels = [], [], []
-        for file_path in tqdm(os.listdir(text_files_folder), desc="Processing text files"):
-            with open(os.path.join(text_files_folder, file_path), "r") as file:
-                content = file.read().strip()
-                difference = target_length - len(content)
-                if difference > 0:  # Sequence is shorter than target length
+                # Optionally, wrap the inner loop with tqdm
+                for file_path in files:
+                    with open(os.path.join(lineage_folder, file_path), "r") as file:
+                        content = file.read().strip()
+                        sequence_lengths.append(len(content))
+                        converted_data.append([file_path, "".join(map(str, content)), class_id])
+
+            target_length = int(np.mean(sequence_lengths))
+
+            for row in tqdm(converted_data, desc="Converting data"):
+                difference = target_length - len(row[1])
+                if difference > 0:
                     padding = "0" * difference
-                    content += padding
-                elif difference < 0:  # Sequence is longer than target length
-                    content = content[:target_length]
+                    row[1] += padding
+                elif difference < 0:
+                    row[1] = row[1][:target_length]
 
-                file_name = '"' + os.path.splitext(file_path)[0] + '"'
-                converted_data.append([file_name, "".join(map(str, content))])
-
-        converted_df = pd.DataFrame(converted_data, columns=["ID", "Enc_Sequence"])  # Create the dataframe
-        converted_df["lineage"] = converted_df["ID"].map(data["lineage"])
-        converted_df.to_csv("./data/converted_data.csv", index=False)
-
-        return converted_df, target_length
+            converted_df = pd.DataFrame(converted_data, columns=["ID", "Enc_Sequence", "lineage"])
+            converted_df.to_csv("./data/converted_data.csv", index=False)
+            return converted_df, target_length, class_to_lineage
+        except Exception as e:
+            logging.error(f"An error occurred during data loading: {str(e)}")
+            raise
 
     def train(self, train_loader):
         self.training_loss = []  # To record training loss after every epoch
 
-        for epoch in range(self.num_epochs):
+        for epoch in tqdm(range(self.num_epochs), desc="Training"):
+            # Existing code
             self.model.train()
             running_loss = 0.0
             correct_predictions = 0
 
-            for batch_idx, (inputs, targets) in enumerate(train_loader):
+            for batch_idx, (inputs, targets) in tqdm(enumerate(train_loader),desc=f"Epoch {epoch + 1}/{self.num_epochs}"):
                 inputs = inputs.float().to(self.device)
                 inputs = inputs.unsqueeze(1)  # Add an extra channel dimension
 
@@ -99,32 +124,47 @@ class GenomicClassifier:
                 self.training_loss.append(running_loss / len(train_loader))
         return self.training_loss
 
-    def evaluate(self, test_loader):
+    def evaluate(self, test_loader, class_to_lineage):
         self.model.eval()
-        total = 0
-        correct = 0
-        top5_correct = 0
+        lineage_metrics = {lineage: {'total': 0, 'correct': 0, 'top3_correct': 0, 'top5_correct': 0} for lineage in
+                           class_to_lineage.values()}
+
         all_predictions = []
         all_labels = []
+
         with torch.no_grad():
             for sequences, labels in tqdm(test_loader, desc="Evaluating"):
                 sequences, labels = sequences.float().to(self.device), labels.to(self.device)
                 sequences = sequences.unsqueeze(1)  # Add an extra channel dimension
                 outputs = self.model(sequences).squeeze(1)  # squeeze the 2nd dimension
+
                 _, predicted = torch.max(outputs, 1)
+                _, top3_pred = torch.topk(outputs, 3)
                 _, top5_pred = torch.topk(outputs, 5)
+
                 all_predictions.extend(predicted.cpu().numpy())
                 all_labels.extend(labels.cpu().numpy())
-                total += labels.size(0)
-                correct += (predicted == labels).sum().item()
-                top5_correct += sum([1 if labels[i] in top5_pred[i] else 0 for i in range(len(labels))])
 
-        top1_accuracy = correct / total
-        top5_accuracy = top5_correct / total
-        print(f"Top 1 Accuracy: {top1_accuracy * 100:.2f}%")
-        print(f"Top 5 Accuracy: {top5_accuracy * 100:.2f}%")
+                for i in range(len(labels)):
+                    lineage_name = class_to_lineage[labels[i].item()]
+                    lineage_metrics[lineage_name]['total'] += 1
+                    lineage_metrics[lineage_name]['correct'] += (predicted[i] == labels[i]).item()
+                    lineage_metrics[lineage_name]['top3_correct'] += (labels[i] in top3_pred[i]).item()
+                    lineage_metrics[lineage_name]['top5_correct'] += (labels[i] in top5_pred[i]).item()
 
-        return torch.tensor(all_predictions), torch.tensor(all_labels), top1_accuracy, top5_accuracy
+        metrics_data = []
+        for lineage, metrics in lineage_metrics.items():
+            if metrics['total'] > 0:
+                accuracy = metrics['correct'] / metrics['total']
+                precision = precision_score(all_labels, all_predictions, labels=[class_to_lineage[lineage]],
+                                            average='micro')
+                top3acc = metrics['top3_correct'] / metrics['total']
+                top5acc = metrics['top5_correct'] / metrics['total']
+                metrics_data.append([lineage, accuracy, precision, top3acc, top5acc])
+
+        results_df = pd.DataFrame(metrics_data, columns=['Lineage', 'accuracy', 'precision', 'top3acc', 'top5acc'])
+
+        return results_df
 
     def visualize_results(self, test_labels, predicted_onehot, predicted):
         test_labels_bin = label_binarize(test_labels.cpu().numpy(), classes=[i for i in range(self.num_classes)])
@@ -191,66 +231,59 @@ class GenomicClassifier:
 
 
 def main():
-    # convdf,  input_size = load_data()
+    try:
+        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        logging.info(f"Device: {device}")
 
-    data = pd.read_csv("./data/dataset.csv")
-    sequence_lengths = data["sequence_length"].values
-    input_size = sequence_lengths.mean().astype(int)
-    convdf = pd.read_csv("./data/converted_data.csv")
+        classifier = GenomicClassifier(model=None, criterion=None, optimizer=None, scheduler=None, device=device,
+                                       num_epochs=30, num_classes=None)
+        convdf, input_size, class_to_lineage = classifier.load_data()
 
-    convdf['lineage'] = convdf['lineage'].astype('category')
+        convdf['lineage'] = convdf['lineage'].astype('category').cat.codes
+        sequences = convdf['Enc_Sequence']
+        labels = convdf['lineage']
+        X_train, X_test, y_train, y_test = train_test_split(sequences, labels, test_size=0.2, random_state=42)
 
-    sequences = convdf['Enc_Sequence']
-    labels = convdf['lineage']
+        X_train_tensor = torch.tensor(X_train.apply(lambda x: [int(num) for num in x]).tolist())
+        y_train_tensor = torch.tensor(y_train.tolist())
+        train_data = TensorDataset(X_train_tensor, y_train_tensor)
+        train_loader = DataLoader(train_data, batch_size=16)
 
-    X_train, X_test, y_train, y_test = train_test_split(sequences, labels, test_size=0.2, random_state=42)
+        num_classes = len(labels.unique())
+        hidden_size = 32
+        model = ComplexCNN(input_size, hidden_size, num_classes)
+        model.to(device)
 
-    X_train_list = X_train.apply(lambda x: [int(num) for num in x]).tolist()
-    X_train_tensor = torch.tensor(X_train_list)
-    y_train_tensor = torch.tensor(y_train.cat.codes.tolist())
+        criterion = nn.CrossEntropyLoss()
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)
 
-    train_data = TensorDataset(X_train_tensor, y_train_tensor)
-    train_loader = DataLoader(train_data, batch_size=16)
+        classifier.model = model
+        classifier.criterion = criterion
+        classifier.optimizer = optimizer
+        classifier.scheduler = scheduler
+        classifier.num_classes = num_classes
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    print(device)
-    num_classes = len(labels.unique())
-    hidden_size = 32
-    model = ComplexCNN(input_size, hidden_size, num_classes)
-    model.to(device)
-
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)  # Using weight decay
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.1)  # Using learning rate scheduler
-
-    classifier = GenomicClassifier(model, criterion, optimizer, scheduler, device, num_epochs=30,
-                                   num_classes=num_classes)
-
-    model_name = type(model).__name__
-
-    if os.path.exists(f"./model/{model_name}.pth"):
-        classifier.model.load_state_dict(torch.load(f"./model/{model_name}.pth"))
-    else:
         classifier.training_loss = classifier.train(train_loader)
 
-    X_test_list = X_test.apply(lambda x: [int(num) for num in x]).tolist()
-    X_test_tensor = torch.tensor(X_test_list)
-    y_test_tensor = torch.tensor(y_test.cat.codes.tolist())
+        X_test_tensor = torch.tensor(X_test.apply(lambda x: [int(num) for num in x]).tolist())
+        y_test_tensor = torch.tensor(y_test.tolist())
+        test_data = TensorDataset(X_test_tensor, y_test_tensor)
+        test_loader = DataLoader(test_data, batch_size=16)
 
-    test_data = TensorDataset(X_test_tensor, y_test_tensor)
-    test_loader = DataLoader(test_data, batch_size=16)
-    predicted, test_labels, top1_accuracy, top5_accuracy = classifier.evaluate(test_loader)
-    predicted = predicted.long()
-    predicted_onehot = torch.nn.functional.one_hot(predicted, num_classes=num_classes)
-    classifier.visualize_results(test_labels, predicted_onehot, predicted)
+        results_df = classifier.evaluate(test_loader, class_to_lineage)
 
-    # Plot Learning Curve
-    plt.figure()
-    plt.plot(classifier.training_loss)
-    plt.title('Learning Curve')
-    plt.xlabel('Epochs')
-    plt.ylabel('Loss')
-    plt.show()
+        print(results_df)
+
+        plt.figure()
+        plt.plot(classifier.training_loss)
+        plt.title('Learning Curve')
+        plt.xlabel('Epochs')
+        plt.ylabel('Loss')
+        plt.show()
+    except Exception as e:
+        logging.error(f"An error occurred in the main function: {str(e)}")
+        raise
 
 
 if __name__ == "__main__":
