@@ -64,7 +64,7 @@ def load_data(num_lineages=200, samples_per_lineage=50):
                                                                           test_size=0.2, random_state=42)
     train_data = GenomicDataset(train_file_paths, y_train)
     test_data = GenomicDataset(test_file_paths, y_test)
-    return DataLoader(train_data, batch_size=64), DataLoader(test_data, batch_size=64), class_to_lineage
+    return DataLoader(train_data, batch_size=32), DataLoader(test_data, batch_size=32), class_to_lineage
 
 
 class GenomicClassifier:
