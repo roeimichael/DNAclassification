@@ -104,11 +104,9 @@ def encode_sequence(sequence):
                 encoded_sequence += "10"
             elif selected_char == 'T':
                 encoded_sequence += "11"
+
+    encoded_sequence = encoded_sequence[:50000].ljust(50000, '0')
     return encoded_sequence
-
-
-def process_sequence(sequence):
-    return encode_sequence(sequence)
 
 
 # Get all the directories within fasta_files directory
@@ -125,7 +123,7 @@ for lineage in tqdm(all_directories, desc="Processing lineages"):
     for filename in os.listdir(lineage_dir):
         fasta_file_path = os.path.join(lineage_dir, filename)
         sequence = read_fasta_file(fasta_file_path)
-        encoded_sequence = process_sequence(sequence)
+        encoded_sequence = encode_sequence(sequence)
 
         # Save encoded sequence in corresponding lineage folder
         with open(os.path.join(encoded_lineage_dir, filename.replace(".fasta", ".txt")), 'w') as file:
