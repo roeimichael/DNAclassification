@@ -64,7 +64,7 @@ def load_data(num_lineages=200, samples_per_lineage=50):
                                                                           test_size=0.2, random_state=42)
     train_data = GenomicDataset(train_file_paths, y_train)
     test_data = GenomicDataset(test_file_paths, y_test)
-    return DataLoader(train_data, batch_size=32), DataLoader(test_data, batch_size=32), class_to_lineage
+    return DataLoader(train_data, batch_size=16), DataLoader(test_data, batch_size=16), class_to_lineage
 
 
 class GenomicClassifier:
@@ -167,7 +167,7 @@ def main():
 
         logging.info(f"Current device in use: {device}")
 
-        train_loader, test_loader, class_to_lineage = load_data(num_lineages=200, samples_per_lineage=200)
+        train_loader, test_loader, class_to_lineage = load_data(num_lineages=100, samples_per_lineage=250)
         num_classes = len(class_to_lineage)
 
         model = ComplexCNN(input_size=50000, hidden_size=64, num_classes=num_classes)
@@ -178,7 +178,7 @@ def main():
 
         model.to(device)
         criterion = nn.CrossEntropyLoss()
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01, weight_decay=1e-5)
 
         classifier = GenomicClassifier(model=model, criterion=criterion, optimizer=optimizer, device=device,
                                        num_epochs=100, num_classes=num_classes)
