@@ -54,7 +54,7 @@ class GenomicClassifier:
         self.training_loss = []
         self.target_length = 0
 
-    def load_data(self, num_lineages=50, samples_per_lineage=100):
+    def load_data(self, num_lineages=200, samples_per_lineage=50):
         """
         Load genomic data from disk and prepare data loaders.
         """
@@ -87,7 +87,7 @@ class GenomicClassifier:
                                                                               test_size=0.2, random_state=42)
         train_data = GenomicDataset(train_file_paths, y_train, self.target_length)
         test_data = GenomicDataset(test_file_paths, y_test, self.target_length)
-        return DataLoader(train_data, batch_size=4), DataLoader(test_data, batch_size=4), class_to_lineage
+        return DataLoader(train_data, batch_size=8), DataLoader(test_data, batch_size=8), class_to_lineage
 
     def train(self, train_loader):
         """
@@ -121,6 +121,47 @@ class GenomicClassifier:
                 self.training_loss.append(running_loss / len(train_loader))
         return self.training_loss
 
+    def evaluate(self, test_loader, class_to_lineage):
+        self.model.eval()
+        lineage_metrics = {lineage: {'total': 0, 'correct': 0, 'top3_correct': 0, 'top5_correct': 0} for lineage in
+                           class_to_lineage.values()}
+
+        all_predictions = []
+        all_labels = []
+
+        with torch.no_grad():
+            for sequences, labels in tqdm(test_loader, desc="Evaluating"):
+                sequences, labels = sequences.float().to(self.device), labels.to(self.device)
+                sequences = sequences.unsqueeze(1)  # Add an extra channel dimension
+                outputs = self.model(sequences).squeeze(1)  # squeeze the 2nd dimension
+
+                _, predicted = torch.max(outputs, 1)
+                _, top3_pred = torch.topk(outputs, 3)
+                _, top5_pred = torch.topk(outputs, 5)
+
+                all_predictions.extend(predicted.cpu().numpy())
+                all_labels.extend(labels.cpu().numpy())
+
+                for i in range(len(labels)):
+                    lineage_name = class_to_lineage[labels[i].item()]
+                    lineage_metrics[lineage_name]['total'] += 1
+                    lineage_metrics[lineage_name]['correct'] += (predicted[i] == labels[i]).item()
+                    lineage_metrics[lineage_name]['top3_correct'] += (labels[i] in top3_pred[i]).item()
+                    lineage_metrics[lineage_name]['top5_correct'] += (labels[i] in top5_pred[i]).item()
+
+        metrics_data = []
+        for lineage, metrics in lineage_metrics.items():
+            if metrics['total'] > 0:
+                accuracy = metrics['correct'] / metrics['total']
+                precision = precision_score(all_labels, all_predictions, labels=[class_to_lineage[lineage]],
+                                            average='micro')
+                top3acc = metrics['top3_correct'] / metrics['total']
+                top5acc = metrics['top5_correct'] / metrics['total']
+                metrics_data.append([lineage, accuracy, precision, top3acc, top5acc])
+
+        results_df = pd.DataFrame(metrics_data, columns=['Lineage', 'accuracy', 'precision', 'top3acc', 'top5acc'])
+        results_df.to_csv("results.csv", index=False)
+
 
 def main():
     try:
@@ -128,8 +169,8 @@ def main():
         logging.info(f"Device: {device}")
 
         classifier = GenomicClassifier(model=None, criterion=None, optimizer=None, scheduler=None, device=device,
-                                       num_epochs=30, num_classes=None)
-        train_loader, test_loader, class_to_lineage = classifier.load_data(num_lineages=50, samples_per_lineage=100)
+                                       num_epochs=50, num_classes=None)
+        train_loader, test_loader, class_to_lineage = classifier.load_data(num_lineages=20, samples_per_lineage=250)
 
         num_classes = len(class_to_lineage)
         target_length = classifier.target_length  # Get the target length
@@ -144,9 +185,8 @@ def main():
         classifier.scheduler = scheduler
         classifier.num_classes = num_classes
         classifier.train(train_loader)
-
+        classifier.evaluate(test_loader, class_to_lineage)
         # Results visualization - Using training loss as an example
-        import matplotlib.pyplot as plt
         plt.plot(classifier.training_loss)
         plt.title('Learning Curve')
         plt.xlabel('Epochs')
