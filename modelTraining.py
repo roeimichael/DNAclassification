@@ -37,6 +37,36 @@ class GenomicDataset(Dataset):
             return torch.tensor(content, dtype=torch.long), self.labels[idx]
 
 
+def load_data(num_lineages=200, samples_per_lineage=50):
+    """
+    Load genomic data from disk and prepare data loaders.
+    """
+    text_files_folder = "./data/encoded_sequences"
+    assert os.path.exists(text_files_folder), "Data folder does not exist."
+
+    all_lineages = [d for d in os.listdir(text_files_folder) if os.path.isdir(os.path.join(text_files_folder, d))]
+    selected_lineages = np.random.choice(all_lineages, num_lineages, replace=False)
+    label_encoder = LabelEncoder()
+    encoded_lineages = label_encoder.fit_transform(selected_lineages)
+    class_to_lineage = {class_id: lineage for lineage, class_id in zip(selected_lineages, encoded_lineages)}
+    converted_file_paths = []
+    converted_labels = []
+
+    for lineage, class_id in tqdm(zip(selected_lineages, encoded_lineages), desc="Processing lineages"):
+        lineage_folder = os.path.join(text_files_folder, lineage)
+        files = os.listdir(lineage_folder)[:samples_per_lineage]
+        for file_path in files:
+            full_file_path = os.path.join(lineage_folder, file_path)
+            converted_file_paths.append(full_file_path)
+            converted_labels.append(class_id)
+
+    train_file_paths, test_file_paths, y_train, y_test = train_test_split(converted_file_paths, converted_labels,
+                                                                          test_size=0.2, random_state=42)
+    train_data = GenomicDataset(train_file_paths, y_train)
+    test_data = GenomicDataset(test_file_paths, y_test)
+    return DataLoader(train_data, batch_size=8), DataLoader(test_data, batch_size=8), class_to_lineage
+
+
 class GenomicClassifier:
     def __init__(self, model, criterion, optimizer, device, num_epochs, num_classes):
         self.model = model
@@ -46,35 +76,6 @@ class GenomicClassifier:
         self.num_epochs = num_epochs
         self.num_classes = num_classes
         self.training_loss = []
-
-    def load_data(self, num_lineages=200, samples_per_lineage=50):
-        """
-        Load genomic data from disk and prepare data loaders.
-        """
-        text_files_folder = "./data/encoded_sequences"
-        assert os.path.exists(text_files_folder), "Data folder does not exist."
-
-        all_lineages = [d for d in os.listdir(text_files_folder) if os.path.isdir(os.path.join(text_files_folder, d))]
-        selected_lineages = np.random.choice(all_lineages, num_lineages, replace=False)
-        label_encoder = LabelEncoder()
-        encoded_lineages = label_encoder.fit_transform(selected_lineages)
-        class_to_lineage = {class_id: lineage for lineage, class_id in zip(selected_lineages, encoded_lineages)}
-        converted_file_paths = []
-        converted_labels = []
-
-        for lineage, class_id in tqdm(zip(selected_lineages, encoded_lineages), desc="Processing lineages"):
-            lineage_folder = os.path.join(text_files_folder, lineage)
-            files = os.listdir(lineage_folder)[:samples_per_lineage]
-            for file_path in files:
-                full_file_path = os.path.join(lineage_folder, file_path)
-                converted_file_paths.append(full_file_path)
-                converted_labels.append(class_id)
-
-        train_file_paths, test_file_paths, y_train, y_test = train_test_split(converted_file_paths, converted_labels,
-                                                                              test_size=0.2, random_state=42)
-        train_data = GenomicDataset(train_file_paths, y_train)
-        test_data = GenomicDataset(test_file_paths, y_test)
-        return DataLoader(train_data, batch_size=8), DataLoader(test_data, batch_size=8), class_to_lineage
 
     def train(self, train_loader):
         """
@@ -149,24 +150,39 @@ class GenomicClassifier:
         results_df.to_csv("results.csv", index=False)
 
 
+
 def main():
     try:
-        device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-        logging.info(f"Device: {device}")
+        if torch.cuda.is_available():
+            num_gpus = torch.cuda.device_count()
+            logging.info(f"Number of GPUs Available: {num_gpus}")
+            for gpu_id in range(num_gpus):
+                gpu_name = torch.cuda.get_device_name(gpu_id)
+                logging.info(f"GPU {gpu_id}: {gpu_name}")
 
-        classifier = GenomicClassifier(model=None, criterion=None, optimizer=None, device=device,
-                                       num_epochs=100, num_classes=None)
-        train_loader, test_loader, class_to_lineage = classifier.load_data(num_lineages=50, samples_per_lineage=200)
+            device = torch.device("cuda:0")
+        else:
+            logging.info("No GPUs available, using the CPU instead.")
+            device = torch.device("cpu")
 
+        logging.info(f"Current device in use: {device}")
+
+        train_loader, test_loader, class_to_lineage = load_data(num_lineages=50, samples_per_lineage=200)
         num_classes = len(class_to_lineage)
-        model = DecentCNN(input_size=50000, hidden_size=16, num_classes=num_classes)
+
+        model = ComplexCNN(input_size=50000, hidden_size=32, num_classes=num_classes)
+
+        if torch.cuda.device_count() > 1:
+            logging.info("Using multiple GPUs")
+            model = nn.DataParallel(model)
+
         model.to(device)
         criterion = nn.CrossEntropyLoss()
         optimizer = torch.optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-5)
-        classifier.model = model
-        classifier.criterion = criterion
-        classifier.optimizer = optimizer
-        classifier.num_classes = num_classes
+
+        classifier = GenomicClassifier(model=model, criterion=criterion, optimizer=optimizer, device=device,
+                                       num_epochs=100, num_classes=num_classes)
+
         classifier.train(train_loader)
         classifier.evaluate(test_loader, class_to_lineage)
 
@@ -180,7 +196,6 @@ def main():
     except Exception as e:
         logging.error(f"An error occurred: {str(e)}")
         raise
-
 
 if __name__ == "__main__":
     main()
