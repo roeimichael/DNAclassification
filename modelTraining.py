@@ -167,7 +167,7 @@ def main():
 
         logging.info(f"Current device in use: {device}")
 
-        train_loader, test_loader, class_to_lineage = load_data(num_lineages=50, samples_per_lineage=200)
+        train_loader, test_loader, class_to_lineage = load_data(num_lineages=200, samples_per_lineage=200)
         num_classes = len(class_to_lineage)
 
         model = ComplexCNN(input_size=50000, hidden_size=32, num_classes=num_classes)
