@@ -170,7 +170,7 @@ def main():
         train_loader, test_loader, class_to_lineage = load_data(num_lineages=100, samples_per_lineage=200)
         num_classes = len(class_to_lineage)
 
-        model = DecentCNN(input_size=50000, hidden_size=64, num_classes=num_classes)
+        model = ComplexCNN(input_size=50000, hidden_size=64, num_classes=num_classes)
 
         if torch.cuda.device_count() > 1:
             logging.info("Using multiple GPUs")
@@ -178,10 +178,10 @@ def main():
 
         model.to(device)
         criterion = nn.CrossEntropyLoss()
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-5)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.00001, weight_decay=1e-5)
 
         classifier = GenomicClassifier(model=model, criterion=criterion, optimizer=optimizer, device=device,
-                                       num_epochs=100, num_classes=num_classes)
+                                       num_epochs=75, num_classes=num_classes)
 
         classifier.train(train_loader)
         classifier.evaluate(test_loader, class_to_lineage)
