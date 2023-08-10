@@ -109,6 +109,8 @@ class GenomicClassifier:
         return self.training_loss
 
     def evaluate(self, test_loader, class_to_lineage):
+        lineage_to_class = {v: k for k, v in class_to_lineage.items()}
+
         self.model.eval()
         lineage_metrics = {lineage: {'total': 0, 'correct': 0, 'top3_correct': 0, 'top5_correct': 0} for lineage in
                            class_to_lineage.values()}
@@ -140,15 +142,13 @@ class GenomicClassifier:
         for lineage, metrics in lineage_metrics.items():
             if metrics['total'] > 0:
                 accuracy = metrics['correct'] / metrics['total']
-                precision = precision_score(all_labels, all_predictions, labels=[class_to_lineage[lineage]],
-                                            average='micro')
+                precision = precision_score(all_labels, all_predictions, labels=[lineage_to_class[lineage]],average='micro')
                 top3acc = metrics['top3_correct'] / metrics['total']
                 top5acc = metrics['top5_correct'] / metrics['total']
                 metrics_data.append([lineage, accuracy, precision, top3acc, top5acc])
 
         results_df = pd.DataFrame(metrics_data, columns=['Lineage', 'accuracy', 'precision', 'top3acc', 'top5acc'])
         results_df.to_csv("results.csv", index=False)
-
 
 
 def main():
@@ -167,7 +167,7 @@ def main():
 
         logging.info(f"Current device in use: {device}")
 
-        train_loader, test_loader, class_to_lineage = load_data(num_lineages=20, samples_per_lineage=250)
+        train_loader, test_loader, class_to_lineage = load_data(num_lineages=100, samples_per_lineage=200)
         num_classes = len(class_to_lineage)
 
         model = DecentCNN(input_size=50000, hidden_size=64, num_classes=num_classes)
@@ -181,7 +181,7 @@ def main():
         optimizer = torch.optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-5)
 
         classifier = GenomicClassifier(model=model, criterion=criterion, optimizer=optimizer, device=device,
-                                       num_epochs=10, num_classes=num_classes)
+                                       num_epochs=100, num_classes=num_classes)
 
         classifier.train(train_loader)
         classifier.evaluate(test_loader, class_to_lineage)
@@ -196,6 +196,7 @@ def main():
     except Exception as e:
         logging.error(f"An error occurred: {str(e)}")
         raise
+
 
 if __name__ == "__main__":
     main()
