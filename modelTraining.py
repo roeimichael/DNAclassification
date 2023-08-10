@@ -170,7 +170,7 @@ def main():
         train_loader, test_loader, class_to_lineage = load_data(num_lineages=100, samples_per_lineage=200)
         num_classes = len(class_to_lineage)
 
-        model = ComplexCNN(input_size=50000, hidden_size=64, num_classes=num_classes)
+        model = ComplexCNN(input_size=50000, hidden_size=32, num_classes=num_classes)
 
         if torch.cuda.device_count() > 1:
             logging.info("Using multiple GPUs")
