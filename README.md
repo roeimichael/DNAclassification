@@ -23,19 +23,23 @@ The project utilizes the following libraries:
 
 Clone the repository and install the required packages:
 
-\```bash
-git clone [https://github.com/yourusername/COVID-19-Variant-Classification.git](https://github.com/roeimichael/DNAclassification)
+```bash
+git clone https://github.com/roeimichael/DNAclassification
 cd DNAclassification
 pip install -r requirements.txt
-\```
+```
 
 ## Usage
 
-- to run the code you would first need to download the data locally by running ProduceData.py 
-- than encode it using preprocessing.py
-- now that you have the dataset all ready for training run modelTraining.py
-- and to show final results in graph formatting  run ProcessingResults.py
-- **make sure to notice that some of the parameters are adjustable from the code itself and arent as modular and easy to use as could be**
+Follow these steps to run the code:
+
+1. **Download Data**: Run `ProduceData.py` to download the necessary data locally.
+2. **Encode Data**: Execute `preprocessing.py` to encode the dataset.
+3. **Train Model**: Now, with the dataset ready, run `modelTraining.py` for training.
+4. **Visualize Results**: Use `ProcessingResults.py` to display the final results in graph format.
+
+_Note: Some parameters can be adjusted directly in the code, and they may not be as modular as could be._
+
 
 ##Contributors
 - Roei Michael - 322989666
