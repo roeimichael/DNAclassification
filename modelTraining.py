@@ -24,17 +24,20 @@ logging.basicConfig(level=logging.INFO)
 
 class GenomicDataset(Dataset):
     def __init__(self, file_paths, labels):
-        self.file_paths = file_paths
+        self.sequences = []
         self.labels = labels
 
+        for file_path in tqdm(file_paths, desc="Loading sequences"):
+            with open(file_path, "r") as file:
+                content = file.read().strip()
+                content = [int(c) for c in content]
+                self.sequences.append(torch.tensor(content, dtype=torch.long))
+
     def __len__(self):
-        return len(self.file_paths)
+        return len(self.sequences)
 
     def __getitem__(self, idx):
-        with open(self.file_paths[idx], "r") as file:
-            content = file.read().strip()
-            content = [int(c) for c in content]  # Convert string of '0's and '1's to a list of integers
-            return torch.tensor(content, dtype=torch.long), self.labels[idx]
+        return self.sequences[idx], self.labels[idx]
 
 
 def load_data(num_lineages=200, samples_per_lineage=50):
@@ -160,7 +163,9 @@ def main():
                 gpu_name = torch.cuda.get_device_name(gpu_id)
                 logging.info(f"GPU {gpu_id}: {gpu_name}")
 
-            device = torch.device("cuda:0")
+            device = torch.device("cuda:3")
+
+
         else:
             logging.info("No GPUs available, using the CPU instead.")
             device = torch.device("cpu")
@@ -173,6 +178,7 @@ def main():
         model = DecentCNN(input_size=50000, hidden_size=128, num_classes=num_classes)
 
         if torch.cuda.device_count() > 1:
+
             logging.info("Using multiple GPUs")
             model = nn.DataParallel(model)
 
